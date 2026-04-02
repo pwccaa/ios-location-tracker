@@ -1,14 +1,11 @@
 from flask import Flask, request, render_template, jsonify
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 
-# Memória temporária do servidor
-dados_mapa = {
-    "lat": -23.5505, # Valor padrão (ex: SP)
-    "lon": -46.6333,
-    "timestamp": "Aguardando sinal..."
-}
+# Agora usamos uma LISTA para guardar o histórico de todos os pontos
+historico_rotas = []
 
 def fix_coordinate(value):
     try:
@@ -18,7 +15,7 @@ def fix_coordinate(value):
             return val_float / (10 ** (len(str_val) - 2))
         return val_float
     except:
-        return 0.0
+        return None
 
 @app.route('/')
 def index():
@@ -26,23 +23,34 @@ def index():
 
 @app.route('/data')
 def get_data():
-    # Rota que o JavaScript vai consultar para atualizar o mapa
-    return jsonify(dados_mapa)
+    # Retorna a lista inteira de pontos para desenhar a linha
+    return jsonify(historico_rotas)
 
 @app.route('/location', methods=['POST'])
 def update_location():
     data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON invalido"}), 400
+
     raw_lat = data.get("lat")
     raw_lon = data.get("long") if data.get("long") else data.get("lon")
     
-    dados_mapa["lat"] = fix_coordinate(raw_lat)
-    dados_mapa["lon"] = fix_coordinate(raw_lon)
-    dados_mapa["timestamp"] = datetime.now().strftime("%H:%M:%S")
+    lat = fix_coordinate(raw_lat)
+    lon = fix_coordinate(raw_lon)
     
-    print(f"📍 Nova localização: {dados_mapa['lat']}, {dados_mapa['lon']}")
-    return jsonify({"status": "ok"}), 200
+    # Só adiciona à rota se as coordenadas forem válidas
+    if lat is not None and lon is not None:
+        novo_ponto = {
+            "lat": lat,
+            "lon": lon,
+            "timestamp": datetime.now().strftime("%H:%M:%S")
+        }
+        historico_rotas.append(novo_ponto)
+        print(f"📍 Ponto adicionado à rota: {lat}, {lon} (Total: {len(historico_rotas)})")
+        return jsonify({"status": "ok", "pontos_totais": len(historico_rotas)}), 200
+    else:
+        return jsonify({"error": "Coordenadas invalidas"}), 400
 
 if __name__ == '__main__':
-    import os
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
