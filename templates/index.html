@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rastreador VIP</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        #map { height: 500px; width: 100%; border-radius: 15px; }
+        body { font-family: sans-serif; text-align: center; background: #121212; color: white; }
+    </style>
+</head>
+<body>
+    <h2>📍 Localização em Tempo Real</h2>
+    <p id="info">Carregando...</p>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        var map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        var marker = L.marker([0, 0]).addTo(map);
+
+        function atualizarMapa() {
+            fetch('/data')
+                .then(res => res.json())
+                .then(data => {
+                    var pos = [data.lat, data.lon];
+                    marker.setLatLng(pos);
+                    map.setView(pos, 15);
+                    document.getElementById('info').innerText = "Última atualização: " + data.timestamp + " (" + data.lat + ", " + data.lon + ")";
+                });
+        }
+
+        setInterval(atualizarMapa, 3000); // Atualiza a cada 3 segundos
+        atualizarMapa();
+    </script>
+</body>
+</html>
