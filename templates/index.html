@@ -1,82 +1,112 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Rastreador de Rota VIP (Suave)</title>
+    <title>Rastreador Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { font-family: sans-serif; text-align: center; background: #121212; color: white; margin: 0; padding: 20px; }
-        #map { height: 75vh; width: 100%; border-radius: 15px; margin-top: 10px; }
-        .status { font-size: 14px; color: #aaa; }
+        :root { --bg: #0f172a; --card: #1e293b; --accent: #38bdf8; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: white; margin: 0; padding: 0; }
+        
+        /* Container do Mapa */
+        #map-container { position: relative; height: 50vh; width: 100%; border-bottom: 2px solid var(--accent); }
+        #map { height: 100%; width: 100%; }
+        
+        /* Overlay de Status */
+        #status-overlay { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 23, 42, 0.8); z-index: 1000;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.5s; pointer-events: none;
+        }
+        .hidden { opacity: 0; }
+
+        /* Lista de Histórico */
+        #history { padding: 20px; max-width: 800px; margin: auto; }
+        .route-card { 
+            background: var(--card); border-radius: 12px; padding: 15px; 
+            margin-bottom: 10px; cursor: pointer; border: 1px solid transparent;
+            transition: 0.3s;
+        }
+        .route-card:hover { border-color: var(--accent); }
+        .route-header { display: flex; justify-content: space-between; align-items: center; }
+        .tag-active { background: #10b981; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
     </style>
 </head>
 <body>
-    <h2>📍 Histórico de Rota (Snap to Roads)</h2>
-    <p id="info" class="status">Aguardando coordenadas...</p>
-    <div id="map"></div>
+
+    <div id="map-container">
+        <div id="status-overlay">
+            <h2 id="status-msg">Fora de rota ou localização desativada</h2>
+            <p>Aguardando novo sinal do iPhone...</p>
+        </div>
+        <div id="map"></div>
+    </div>
+
+    <div id="history">
+        <h3>🕒 Histórico de Rotas</h3>
+        <div id="route-list">
+            </div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         var map = L.map('map').setView([-29.7435, -52.4067], 14);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
         
-        var marker = null;
-        // Linha azul agora para diferenciar, com um traço mais bonito
-        var polyline = L.polyline([], {color: '#0088ff', weight: 5, opacity: 0.8}).addTo(map);
+        var currentPolyline = L.polyline([], {color: '#38bdf8', weight: 6}).addTo(map);
+        var marker = L.marker([0,0]).addTo(map);
 
-        function atualizarMapa() {
+        function updateUI() {
             fetch('/data')
                 .then(res => res.json())
                 .then(data => {
-                    if (data.length === 0) return;
+                    const rotas = data.rotas;
+                    const idAtiva = data.ativa;
+                    const listContainer = document.getElementById('route-list');
+                    listContainer.innerHTML = '';
 
-                    var ultimoPonto = data[data.length - 1];
-                    var posMarker = [ultimoPonto.lat, ultimoPonto.lon];
-
-                    // Atualiza o marcador imediatamente
-                    if (!marker) {
-                        marker = L.marker(posMarker).addTo(map);
-                        map.setView(posMarker, 15);
+                    // 1. Atualizar o Mapa Central com a Rota Ativa
+                    if (idAtiva && rotas[idAtiva]) {
+                        document.getElementById('status-overlay').classList.add('hidden');
+                        const pontos = rotas[idAtiva].pontos;
+                        const latlngs = pontos.map(p => [p.lat, p.lon]);
+                        currentPolyline.setLatLngs(latlngs);
+                        marker.setLatLng(latlngs[latlngs.length - 1]);
+                        map.fitBounds(currentPolyline.getBounds());
                     } else {
-                        marker.setLatLng(posMarker);
+                        document.getElementById('status-overlay').classList.remove('hidden');
                     }
 
-                    // Se tivermos apenas 1 ponto, não tem como traçar rota ainda
-                    if (data.length < 2) {
-                        document.getElementById('info').innerText = "Última atualização: " + ultimoPonto.timestamp + " | Apenas 1 ponto registrado.";
-                        return;
-                    }
-
-                    // Pega no máximo os últimos 50 pontos para não estourar o limite da API pública do OSRM
-                    var pontosParaRota = data.slice(-50);
-                    
-                    // O OSRM exige o formato lon,lat separados por ponto-e-vírgula
-                    var coordsString = pontosParaRota.map(p => p.lon + ',' + p.lat).join(';');
-                    
-                    // Chama a API pública de roteamento (calcula a rota de carro pelas ruas)
-                    var osrmUrl = `https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`;
-
-                    fetch(osrmUrl)
-                        .then(resOSRM => resOSRM.json())
-                        .then(rotaData => {
-                            if (rotaData.routes && rotaData.routes.length > 0) {
-                                // O OSRM devolve [longitude, latitude], mas o Leaflet desenha usando [latitude, longitude]
-                                var coordsTratadas = rotaData.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
-                                
-                                polyline.setLatLngs(coordsTratadas);
-                                map.fitBounds(polyline.getBounds()); // Ajusta o zoom para ver a rota inteira
-                            }
-                        })
-                        .catch(err => console.log("Erro na API de Rota:", err));
-
-                    document.getElementById('info').innerText = 
-                        "Última atualização: " + ultimoPonto.timestamp + 
-                        " | Pontos registrados: " + data.length + " (Suavizado nas ruas)";
-                })
-                .catch(err => console.error("Erro ao buscar dados do Python:", err));
+                    // 2. Criar os Cards de Histórico (Invertido para o mais novo vir primeiro)
+                    Object.keys(rotas).reverse().forEach(id => {
+                        const r = rotas[id];
+                        const card = document.createElement('div');
+                        card.className = 'route-card';
+                        card.onclick = () => verRotaAntiga(r.pontos);
+                        
+                        card.innerHTML = `
+                            <div class="route-header">
+                                <strong>Rota ${r.start}</strong>
+                                ${r.status === 'active' ? '<span class="tag-active">EM CURSO</span>' : '<span>Encerrada às '+r.end+'</span>'}
+                            </div>
+                            <small>${r.pontos.length} localizações registradas</small>
+                        `;
+                        listContainer.appendChild(card);
+                    });
+                });
         }
 
-        setInterval(atualizarMapa, 3000);
-        atualizarMapa();
+        function verRotaAntiga(pontos) {
+            // Quando clica no card, o mapa foca naquela rota específica
+            const latlngs = pontos.map(p => [p.lat, p.lon]);
+            currentPolyline.setLatLngs(latlngs);
+            map.fitBounds(currentPolyline.getBounds());
+            // Se quiser suavizar essa rota antiga com OSRM, pode chamar a função aqui!
+        }
+
+        setInterval(updateUI, 5000);
+        updateUI();
     </script>
 </body>
 </html>
