@@ -51,7 +51,7 @@ def update_location():
         ultimo_ponto_time = datetime.strptime(ultima_rota['pontos'][-1]['time'], "%H:%M:%S").replace(
             year=agora.year, month=agora.month, day=agora.day)
         
-        if agora - ultimo_ponto_time > timedelta(minutes=15):
+        if agora - ultimo_ponto_time > timedelta(seconds=120):
             ultima_rota['status'] = 'finished'
             ultima_rota['end'] = ultima_rota['pontos'][-1]['time']
             criar_nova = True
