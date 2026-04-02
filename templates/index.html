@@ -1,170 +1,121 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Rastreador de Rotas Pro</title>
+    <title>Rastreador Pro + SnapToRoad</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         :root { --bg: #0f172a; --card: #1e293b; --accent: #38bdf8; --text: #f8fafc; }
-        body { font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; overflow-x: hidden; }
-        
-        /* Container do Mapa */
-        #map-container { position: relative; height: 50vh; width: 100%; border-bottom: 3px solid var(--accent); box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-        #map { height: 100%; width: 100%; z-index: 1; }
-        
-        /* Overlay de Status (Aparece quando está offline) */
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; }
+        #map-container { position: relative; height: 50vh; width: 100%; border-bottom: 3px solid var(--accent); }
+        #map { height: 100%; width: 100%; }
         #status-overlay { 
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(15, 23, 42, 0.85); z-index: 1000;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
-            transition: opacity 0.5s ease; pointer-events: none; text-align: center;
+            transition: opacity 0.5s; pointer-events: none;
         }
         .hidden { opacity: 0; visibility: hidden; }
-
-        /* Lista de Histórico */
         #history { padding: 20px; max-width: 900px; margin: auto; }
-        h3 { border-left: 4px solid var(--accent); padding-left: 10px; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; }
-
         .route-card { 
-            background: var(--card); border-radius: 12px; padding: 18px; 
-            margin-bottom: 12px; cursor: pointer; border: 1px solid #334155;
-            transition: all 0.2s ease; display: flex; flex-direction: column; gap: 5px;
+            background: var(--card); border-radius: 12px; padding: 15px; margin-bottom: 12px; 
+            cursor: pointer; border: 1px solid #334155; transition: 0.2s;
         }
-        .route-card:hover { border-color: var(--accent); transform: translateY(-2px); background: #253347; }
-        .route-card:active { transform: translateY(0); }
-
-        .route-header { display: flex; justify-content: space-between; align-items: center; }
-        .route-id { font-weight: bold; color: var(--accent); }
-        
-        .tag-active { background: #10b981; color: white; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 800; animation: pulse 2s infinite; }
-        .tag-finished { color: #94a3b8; font-size: 12px; }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-
-        .route-details { font-size: 13px; color: #94a3b8; display: flex; gap: 15px; margin-top: 5px; }
+        .route-card:hover { border-color: var(--accent); background: #253347; }
+        .tag-active { background: #10b981; color: white; padding: 4px 10px; border-radius: 20px; font-size: 11px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% {opacity:1} 50% {opacity:0.5} 100% {opacity:1} }
     </style>
 </head>
 <body>
 
     <div id="map-container">
-        <div id="status-overlay" id="overlay">
-            <h2 id="status-msg">Aguardando Sinal...</h2>
-            <p>Nenhuma rota ativa detectada no momento.</p>
+        <div id="status-overlay">
+            <h2>Aguardando Sinal...</h2>
+            <p>Nenhuma rota ativa detectada.</p>
         </div>
         <div id="map"></div>
     </div>
 
     <div id="history">
         <h3>🕒 Histórico de Viagens</h3>
-        <div id="route-list">
-            </div>
+        <div id="route-list"></div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Configuração inicial do mapa
         var map = L.map('map', { zoomControl: false }).setView([-29.7435, -52.4067], 15);
-        L.control.zoom({ position: 'bottomright' }).addTo(map);
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap'
-        }).addTo(map);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
         
-        var currentPolyline = L.polyline([], {
-            color: '#38bdf8', 
-            weight: 6, 
-            opacity: 0.9,
-            lineJoin: 'round'
-        }).addTo(map);
-        
-        var marker = L.circleMarker([0,0], {
-            radius: 8,
-            fillColor: "#38bdf8",
-            color: "#fff",
-            weight: 2,
-            fillOpacity: 1
-        }).addTo(map);
+        var currentPolyline = L.polyline([], {color: '#38bdf8', weight: 6, opacity: 0.8}).addTo(map);
+        var marker = L.circleMarker([0,0], {radius: 8, fillColor: "#38bdf8", color: "#fff", weight: 2, fillOpacity: 1}).addTo(map);
 
-        function updateUI() {
-            fetch('/data')
-                .then(res => res.json())
-                .then(data => {
-                    const rotas = data.rotas;
-                    const idAtiva = data.ativa;
-                    const listContainer = document.getElementById('route-list');
-                    const overlay = document.getElementById('status-overlay');
-
-                    // 1. Gerenciar Mapa e Overlay
-                    if (idAtiva && rotas[idAtiva]) {
-                        overlay.classList.add('hidden');
-                        const pontos = rotas[idAtiva].pontos;
-                        const latlngs = pontos.map(p => [p.lat, p.lon]);
-                        
-                        currentPolyline.setLatLngs(latlngs);
-                        const lastP = latlngs[latlngs.length - 1];
-                        marker.setLatLng(lastP);
-                        
-                        // Ajusta o zoom para a rota atual
-                        map.fitBounds(currentPolyline.getBounds(), {padding: [50, 50]});
-                    } else {
-                        overlay.classList.remove('hidden');
-                    }
-
-                    // 2. Renderizar Histórico (Cards)
-                    if (Object.keys(rotas).length === 0) {
-                        listContainer.innerHTML = '<p style="text-align:center; color:#64748b;">Nenhuma viagem registrada ainda.</p>';
-                        return;
-                    }
-
-                    let htmlBuffer = '';
-                    // Ordena: IDs mais novos primeiro
-                    const sortedIds = Object.keys(rotas).sort().reverse();
-
-                    sortedIds.forEach(id => {
-                        const r = rotas[id];
-                        const isActive = (id === idAtiva);
-                        
-                        htmlBuffer += `
-                            <div class="route-card" onclick="focarRota('${id}')">
-                                <div class="route-header">
-                                    <span class="route-id">Viagem ${r.start}</span>
-                                    ${isActive ? '<span class="tag-active">AO VIVO</span>' : '<span class="tag-finished">Encerrada</span>'}
-                                </div>
-                                <div class="route-details">
-                                    <span>📍 ${r.pontos.length} pontos</span>
-                                    <span>⏱️ ${isActive ? 'Em curso...' : 'Fim: ' + r.end}</span>
-                                </div>
-                            </div>
-                        `;
-                    });
-                    listContainer.innerHTML = htmlBuffer;
-
-                    // Salva os dados globalmente para o clique nos cards funcionar
-                    window.allRoutes = rotas;
-                })
-                .catch(err => console.error("Erro ao atualizar:", err));
+        // MÁGICA: Função que consulta o OSRM para suavizar a rota
+        async function getSnappedRoute(pontos) {
+            if (pontos.length < 2) return pontos.map(p => [p.lat, p.lon]);
+            
+            const coords = pontos.map(p => `${p.lon},${p.lat}`).join(';');
+            try {
+                const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`);
+                const data = await response.json();
+                if (data.routes && data.routes.length > 0) {
+                    return data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+                }
+            } catch (e) {
+                console.error("Erro no SnapToRoad:", e);
+            }
+            return pontos.map(p => [p.lat, p.lon]); // Fallback para linha reta
         }
 
-        // Função para quando clicar no card
-        window.focarRota = function(id) {
+        async function updateUI() {
+            const res = await fetch('/data');
+            const data = await res.json();
+            const rotas = data.rotas;
+            const idAtiva = data.ativa;
+            const listContainer = document.getElementById('route-list');
+            const overlay = document.getElementById('status-overlay');
+
+            if (idAtiva && rotas[idAtiva]) {
+                overlay.classList.add('hidden');
+                const snappedCoords = await getSnappedRoute(rotas[idAtiva].pontos);
+                currentPolyline.setLatLngs(snappedCoords);
+                
+                const lastP = rotas[idAtiva].pontos[rotas[idAtiva].pontos.length - 1];
+                marker.setLatLng([lastP.lat, lastP.lon]);
+                map.fitBounds(currentPolyline.getBounds(), {padding: [50, 50]});
+            } else {
+                overlay.classList.remove('hidden');
+            }
+
+            // Renderiza os Cards
+            let htmlBuffer = '';
+            const sortedIds = Object.keys(rotas).sort().reverse();
+            sortedIds.forEach(id => {
+                const r = rotas[id];
+                const isActive = (id === idAtiva);
+                htmlBuffer += `
+                    <div class="route-card" onclick="focarRota('${id}')">
+                        <div style="display:flex; justify-content:space-between; align-items:center">
+                            <strong>Viagem ${r.start}</strong>
+                            ${isActive ? '<span class="tag-active">AO VIVO</span>' : '<span style="color:#94a3b8;font-size:12px">Fim: '+r.end+'</span>'}
+                        </div>
+                        <small style="color:#64748b">${r.pontos.length} pontos registrados</small>
+                    </div>`;
+            });
+            listContainer.innerHTML = htmlBuffer || '<p>Nenhuma rota.</p>';
+            window.allRoutes = rotas;
+        }
+
+        window.focarRota = async function(id) {
             const rota = window.allRoutes[id];
             if (!rota) return;
-            
-            const latlngs = rota.pontos.map(p => [p.lat, p.lon]);
-            currentPolyline.setLatLngs(latlngs);
-            marker.setLatLng(latlngs[latlngs.length - 1]);
-            map.fitBounds(currentPolyline.getBounds(), {padding: [30, 30]});
-            
-            // Scroll suave para o topo para ver o mapa
+            const snappedCoords = await getSnappedRoute(rota.pontos);
+            currentPolyline.setLatLngs(snappedCoords);
+            marker.setLatLng(snappedCoords[snappedCoords.length - 1]);
+            map.fitBounds(currentPolyline.getBounds(), {padding: [40, 40]});
             window.scrollTo({ top: 0, behavior: 'smooth' });
         };
 
-        // Loop de atualização
-        setInterval(updateUI, 4000);
+        setInterval(updateUI, 10000); // 10s para não estourar limite de API
         updateUI();
     </script>
 </body>
