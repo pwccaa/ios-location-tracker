@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Rastreador de Rota VIP</title>
+    <title>Rastreador de Rota VIP (Suave)</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { font-family: sans-serif; text-align: center; background: #121212; color: white; margin: 0; padding: 20px; }
@@ -10,51 +10,69 @@
     </style>
 </head>
 <body>
-    <h2>📍 Histórico de Rota</h2>
+    <h2>📍 Histórico de Rota (Snap to Roads)</h2>
     <p id="info" class="status">Aguardando coordenadas...</p>
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Inicia o mapa (Centro aproximado baseado nos seus logs)
         var map = L.map('map').setView([-29.7435, -52.4067], 14);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
         
         var marker = null;
-        // Cria a linha (polyline) que vai conectar os pontos. Cor vermelha, espessura 4.
-        var polyline = L.polyline([], {color: '#ff3333', weight: 4}).addTo(map);
+        // Linha azul agora para diferenciar, com um traço mais bonito
+        var polyline = L.polyline([], {color: '#0088ff', weight: 5, opacity: 0.8}).addTo(map);
 
         function atualizarMapa() {
             fetch('/data')
                 .then(res => res.json())
                 .then(data => {
-                    if (data.length === 0) return; // Se não tem rota, não faz nada
+                    if (data.length === 0) return;
 
-                    // Transforma o JSON do Python em um formato que a linha do Leaflet entende
-                    var latlngs = data.map(ponto => [ponto.lat, ponto.lon]);
-                    
-                    // Atualiza a linha com todos os pontos
-                    polyline.setLatLngs(latlngs);
-                    
-                    // Pega o último ponto para atualizar o marcador
                     var ultimoPonto = data[data.length - 1];
-                    var pos = [ultimoPonto.lat, ultimoPonto.lon];
+                    var posMarker = [ultimoPonto.lat, ultimoPonto.lon];
 
+                    // Atualiza o marcador imediatamente
                     if (!marker) {
-                        marker = L.marker(pos).addTo(map);
-                        map.setView(pos, 15); // Centraliza na primeira vez
+                        marker = L.marker(posMarker).addTo(map);
+                        map.setView(posMarker, 15);
                     } else {
-                        marker.setLatLng(pos);
+                        marker.setLatLng(posMarker);
                     }
 
-                    // Opcional: Faz o mapa afastar/aproximar automaticamente para caber a rota inteira
-                    map.fitBounds(polyline.getBounds());
+                    // Se tivermos apenas 1 ponto, não tem como traçar rota ainda
+                    if (data.length < 2) {
+                        document.getElementById('info').innerText = "Última atualização: " + ultimoPonto.timestamp + " | Apenas 1 ponto registrado.";
+                        return;
+                    }
+
+                    // Pega no máximo os últimos 50 pontos para não estourar o limite da API pública do OSRM
+                    var pontosParaRota = data.slice(-50);
+                    
+                    // O OSRM exige o formato lon,lat separados por ponto-e-vírgula
+                    var coordsString = pontosParaRota.map(p => p.lon + ',' + p.lat).join(';');
+                    
+                    // Chama a API pública de roteamento (calcula a rota de carro pelas ruas)
+                    var osrmUrl = `https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`;
+
+                    fetch(osrmUrl)
+                        .then(resOSRM => resOSRM.json())
+                        .then(rotaData => {
+                            if (rotaData.routes && rotaData.routes.length > 0) {
+                                // O OSRM devolve [longitude, latitude], mas o Leaflet desenha usando [latitude, longitude]
+                                var coordsTratadas = rotaData.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+                                
+                                polyline.setLatLngs(coordsTratadas);
+                                map.fitBounds(polyline.getBounds()); // Ajusta o zoom para ver a rota inteira
+                            }
+                        })
+                        .catch(err => console.log("Erro na API de Rota:", err));
 
                     document.getElementById('info').innerText = 
                         "Última atualização: " + ultimoPonto.timestamp + 
-                        " | Pontos registrados: " + data.length;
+                        " | Pontos registrados: " + data.length + " (Suavizado nas ruas)";
                 })
-                .catch(err => console.error("Erro ao buscar dados:", err));
+                .catch(err => console.error("Erro ao buscar dados do Python:", err));
         }
 
         setInterval(atualizarMapa, 3000);
