@@ -1,11 +1,15 @@
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, request, render_template, jsonify, session, redirect, url_for
 from datetime import datetime, timedelta
 import os
 
 app = Flask(__name__)
 
+# Configurações de Segurança
+app.secret_key = os.environ.get("SECRET_KEY", "super_secreta_key_123") # Necessário para usar sessões
+SENHA_ACESSO = os.environ.get("SENHA_ACESSO", "admin123") # Senha da tela de login
+API_KEY_IOS = os.environ.get("API_KEY", "chave_secreta_iphone") # Senha que o Atalho do iOS vai enviar
+
 # Banco de dados temporário (em memória)
-# Estrutura: { 'id_rota': { 'pontos': [], 'status': 'active/finished', 'start': '', 'end': '' } }
 historico_global = {}
 rota_ativa_id = None
 
@@ -18,21 +22,49 @@ def fix_coordinate(value):
         return val_float
     except: return None
 
+# --- ROTAS DE AUTENTICAÇÃO ---
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        senha_digitada = request.form.get('password')
+        if senha_digitada == SENHA_ACESSO:
+            session['logged_in'] = True
+            return redirect(url_for('index'))
+        else:
+            return render_template('login.html', erro="Senha incorreta!")
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
+
+# --- ROTAS PROTEGIDAS DA INTERFACE ---
 @app.route('/')
 def index():
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
     return render_template('index.html')
 
 @app.route('/data')
 def get_data():
+    if not session.get('logged_in'):
+        return jsonify({"error": "Não autorizado"}), 401
     return jsonify({
         "rotas": historico_global,
         "ativa": rota_ativa_id
     })
 
+# --- ROTA DO IPHONE (Protegida por API Key) ---
 @app.route('/location', methods=['POST'])
 def update_location():
     global rota_ativa_id
     data = request.get_json()
+    
+    # Verifica se o iPhone mandou a chave certa
+    if not data or data.get("key") != API_KEY_IOS:
+        return jsonify({"error": "Acesso negado"}), 401
+
     lat = fix_coordinate(data.get("lat"))
     lon = fix_coordinate(data.get("lon") or data.get("long"))
     
@@ -42,7 +74,6 @@ def update_location():
     agora = datetime.now()
     novo_ponto = {"lat": lat, "lon": lon, "time": agora.strftime("%H:%M:%S")}
 
-    # Lógica de criação de nova rota (Gap de 15 minutos)
     criar_nova = False
     if not rota_ativa_id:
         criar_nova = True
@@ -51,7 +82,7 @@ def update_location():
         ultimo_ponto_time = datetime.strptime(ultima_rota['pontos'][-1]['time'], "%H:%M:%S").replace(
             year=agora.year, month=agora.month, day=agora.day)
         
-        if agora - ultimo_ponto_time > timedelta(minutes=3):
+        if agora - ultimo_ponto_time > timedelta(minutes=15):
             ultima_rota['status'] = 'finished'
             ultima_rota['end'] = ultima_rota['pontos'][-1]['time']
             criar_nova = True
